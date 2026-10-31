@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# keyhunter v31 — Termux (Multi-line Custom + SDCard Copy)
+# keyhunter v31.4 — Termux (Guaranteed Links + Full Secret)
 set -uo pipefail
 
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[0;33m'; C='\033[0;36m'; B='\033[1m'; D='\033[2m'; M='\033[0;35m'; N='\033[0m'
@@ -9,7 +9,6 @@ mkdir -p "$OUT_DIR"
 HISTORY_FILE="$HOME/.keyhunter_history"
 touch "$HISTORY_FILE"
 
-# مسار الذاكرة الداخلية (SDCard)
 SDCARD_DIR="/sdcard/KeyHunter"
 mkdir -p "$SDCARD_DIR" 2>/dev/null || true
 
@@ -17,17 +16,12 @@ cleanup() {
     local exit_code=$?
     if [[ -f "$OUT_DIR/report.html" ]]; then
         find "$OUT_DIR" -type f ! -name "report.html" -delete
-        
-        # نسخ التقرير إلى الذاكرة الداخلية
         local phone_report="$SDCARD_DIR/report_$(date +%Y%m%d_%H%M%S).html"
         if cp "$OUT_DIR/report.html" "$phone_report" 2>/dev/null; then
             echo -e "\n${G}📱 تم نسخ التقرير إلى: ${C}$phone_report${N}"
-            echo -e "${D}(يمكنك فتحه من مدير الملفات في هاتفك)${N}"
         else
-            echo -e "\n${Y}⚠ لم نتمكن من النسخ إلى SDCard (صلاحيات). التقرير هنا:${N}"
-            echo -e "${C}$OUT_DIR/report.html${N}"
+            echo -e "\n${Y}⚠ التقرير هنا: ${C}$OUT_DIR/report.html${N}"
         fi
-        
         if command -v termux-open &>/dev/null; then
             termux-open "$OUT_DIR/report.html" &
         fi
@@ -71,7 +65,7 @@ strict_regex() {
 main() {
     clear
     echo -e "${B}${C}╔══════════════════════════════════════╗${N}"
-    echo -e "${B}${C}║  KEYHUNTER v31 · Termux Edition      ║${N}"
+    echo -e "${B}${C}║  KEYHUNTER v31.4 · Termux Edition    ║${N}"
     echo -e "${B}${C}╚══════════════════════════════════════╝${N}\n"
 
     get_token
@@ -80,7 +74,7 @@ main() {
     echo -e "  ${C}1)${N} AI Keys"
     echo -e "  ${C}2)${N} CPA/Rewards"
     echo -e "  ${C}3)${N} Files & Passwords"
-    echo -e "  ${C}4)${N} Custom (متعدد الأسطر: Enter فارغ للبدء)"
+    echo -e "  ${C}4)${N} Custom (متعدد الأسطر)"
     echo -e "  ${C}5)${N} ALL"
     read -rp "→ " choice
 
@@ -97,9 +91,7 @@ main() {
     fi
     
     if [[ "$choice" == *"4"* ]]; then
-        echo -e "\n${B}أدخل كلمات البحث (سطر لكل كلمة):${N}"
-        echo -e "${D}اكتب كلماتك، ثم اضغط Enter على سطر فارغ للبدء${N}\n"
-        
+        echo -e "\n${B}أدخل كلمات البحث (سطر لكل كلمة، Enter فارغ للبدء):${N}"
         while IFS= read -r custom_kw; do
             [[ -z "$custom_kw" ]] && break
             custom_kw=$(echo "$custom_kw" | xargs)
@@ -108,32 +100,24 @@ main() {
     fi
 
     [[ ${#QUERIES[@]} -eq 0 ]] && { echo -e "${R}لا شيء محدد.${N}"; exit 1; }
-    
     echo -e "\n${G}✓ عدد الكلمات: ${#QUERIES[@]}${N}"
 
-    # بناء arguments لـ ghleaks
     local -a GHL_ARGS=()
-    for q in "${QUERIES[@]}"; do
-        GHL_ARGS+=("-q" "$q")
-    done
+    for q in "${QUERIES[@]}"; do GHL_ARGS+=("-q" "$q"); done
 
     # ========== المرحلة 1 ==========
-    echo -e "\n${B}${C}▶ [1/3] جلب من GitHub (بحث شامل)...${N}"
-    echo -e "${D}الكلمات: ${QUERIES[*]}${N}"
-    echo -e "${Y}⏳ جاري البحث... (قد يستغرق دقيقة أو أكثر)${N}"
-    
+    echo -e "\n${B}${C}▶ [1/3] جلب من GitHub...${N}"
     local raw="$OUT_DIR/raw.jsonl"
     : > "$raw"
     
-    ghleaks "${GHL_ARGS[@]}" --token "$GH_TOKEN" --report "$OUT_DIR/tmp.json" > "$OUT_DIR/gh.log" 2>&1
+    ghleaks "${GHL_ARGS[@]}" --token "$GH_TOKEN" --report "$OUT_DIR/tmp.json" > /dev/null 2>&1
     
     if [[ -s "$OUT_DIR/tmp.json" ]]; then
         local found=$(jq '.findings | length' "$OUT_DIR/tmp.json" 2>/dev/null || echo 0)
-        echo -e "${G}✓ تم العثور على $found نتيجة إجمالاً${N}"
+        echo -e "${G}✓ تم العثور على $found نتيجة${N}"
         jq -c '.findings[]?' "$OUT_DIR/tmp.json" >> "$raw" 2>/dev/null || true
     else
         echo -e "${Y}⚠ لم يتم العثور على نتائج${N}"
-        tail -5 "$OUT_DIR/gh.log" | sed 's/^/  /'
     fi
     rm -f "$OUT_DIR/tmp.json"
 
@@ -160,66 +144,71 @@ main() {
         
         [[ -z "$secret" ]] && continue
         
-        if [[ -z "$url" && -n "$repo" && "$file" != "unknown" ]]; then
-            url="https://github.com/$repo/blob/HEAD/$file"
-        elif [[ -z "$url" && -n "$repo" ]]; then
-            url="https://github.com/$repo"
+        # إذا كان repo فارغاً، حاول استخراجه من الرابط
+        if [[ -z "$repo" && -n "$url" ]]; then
+            repo=$(echo "$url" | sed -n 's|https://github.com/\([^/]*/[^/]*\).*|\1|p')
+        fi
+        
+        # إذا كان repo فارغاً، حاول استخراجه من المسار (File)
+        if [[ -z "$repo" && "$file" == */*/* ]]; then
+            repo=$(echo "$file" | cut -d'/' -f1-2)
+        fi
+        
+        # بناء الرابط دائماً
+        if [[ -z "$url" ]]; then
+            if [[ -n "$repo" && "$file" != "unknown" ]]; then
+                url="https://github.com/$repo/blob/HEAD/$file"
+            elif [[ -n "$repo" ]]; then
+                url="https://github.com/$repo"
+            fi
         fi
         
         local hash=$(echo -n "$secret" | sha256sum | cut -d' ' -f1)
         [[ -n "${HISTORY_HASHES[$hash]:-}" ]] && { skipped_history=$((skipped_history+1)); continue; }
         
         if strict_regex "$secret" "$rule"; then
-            echo "$secret|$rule|$url|$file" >> "$candidates"
+            printf "%s\x1f%s\x1f%s\x1f%s\n" "$secret" "$rule" "$url" "$file" >> "$candidates"
             echo "$hash" >> "$HISTORY_FILE"
             valid=$((valid+1))
-            printf "\r${G}🔑 مفتاح صالح #%d: ${D}%s${N}                              " "$valid" "$rule"
+            printf "\r${G}🔑 مفتاح صالح #%d: ${D}%s${N}                    " "$valid" "$rule"
         else
             skipped=$((skipped+1))
         fi
     done < "$raw"
     printf "\n"
 
-    local total_valid=$(wc -l < "$candidates")
+    local total_valid=$((valid))
     echo -e "${G}✓ صالحة: $total_valid${N} | ${Y}تم تخطيها: $skipped${N} | ${M}قديمة: $skipped_history${N}"
     [[ "$total_valid" -eq 0 ]] && { echo -e "${Y}لا شيء جديد للتحقق.${N}"; exit 0; }
 
     # ========== المرحلة 3 ==========
     echo -e "\n${B}${C}▶ [3/3] التحقق الفعلي (LIVE/DEAD)...${N}"
-    echo -e "${D}فحص $total_valid مفتاح. قد يستغرق وقتاً.${N}\n"
+    echo -e "${D}فحص $total_valid مفتاح...${N}\n"
     
     cat > "$OUT_DIR/verify.sh" << 'VEOF'
 #!/data/data/com.termux/files/usr/bin/bash
-data="$1"
-secret=$(echo "$data" | cut -d'|' -f1)
+secret="$1"; rule="$2"; url="$3"; file="$4"
 res=$(echo "$secret" | timeout 20s trufflehog stdin --only-verified --json 2>/dev/null | head -1)
-if [[ -n "$res" ]]; then echo "$data" >> "$2/live.tmp"; else echo "$data" >> "$2/dead.tmp"; fi
+data="${secret}|${rule}|${url}|${file}"
+if [[ -n "$res" ]]; then printf "%s\n" "$data" >> "$5/live.tmp"; else printf "%s\n" "$data" >> "$5/dead.tmp"; fi
 VEOF
     chmod +x "$OUT_DIR/verify.sh"
 
     : > "$OUT_DIR/live.tmp"
     : > "$OUT_DIR/dead.tmp"
 
-    cat "$candidates" | xargs -P 4 -I {} "$OUT_DIR/verify.sh" "{}" "$OUT_DIR" &
-    local VPID=$!
-    local last_live=0
-
-    while kill -0 $VPID 2>/dev/null; do
+    while IFS=$'\x1f' read -r secret rule url file; do
+        "$OUT_DIR/verify.sh" "$secret" "$rule" "$url" "$file" "$OUT_DIR" &
+        while [[ $(jobs -r | wc -l) -ge 4 ]]; do sleep 0.2; done
+        
         local lc=$(wc -l < "$OUT_DIR/live.tmp" 2>/dev/null || echo 0)
         local dc=$(wc -l < "$OUT_DIR/dead.tmp" 2>/dev/null || echo 0)
         local tc=$((lc + dc))
         local pct=0
         [[ $total_valid -gt 0 ]] && pct=$((tc * 100 / total_valid))
-        
         printf "\r${C}⟳${N} ${B}%3d%%${N} [%d/%d] | ${R}🔥 LIVE: %d${N} | ${D}💀 DEAD: %d${N}   " "$pct" "$tc" "$total_valid" "$lc" "$dc"
-        
-        if [[ $lc -gt $last_live ]]; then
-            printf "\n${R}${B}🔥🔥🔥 عثرت على مفتاح حي #%d! 🔥🔥🔥${N}\n" "$lc"
-            last_live=$lc
-        fi
-        sleep 0.5
-    done
-    wait $VPID
+    done < "$candidates"
+    wait
     
     local final_live=$(wc -l < "$OUT_DIR/live.tmp")
     local final_dead=$(wc -l < "$OUT_DIR/dead.tmp")
@@ -256,7 +245,7 @@ h2{font-size:18px;color:#c9d1d9;border-bottom:2px solid #30363d;padding-bottom:8
 .card.live .badge{background:#da3633;color:#fff}
 .file{font-size:12px;color:#8b949e;word-break:break-all;margin-bottom:10px;font-family:monospace}
 .secret-box{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px;font-family:monospace;font-size:13px;word-break:break-all;color:#f0c000;margin-bottom:10px}
-.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.actions{display:grid;grid-template-columns:1fr;gap:8px}
 .btn{padding:12px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;text-align:center;text-decoration:none;display:block;transition:0.2s}
 .btn-copy{background:#238636;color:#fff}
 .btn-copy:active{background:#2ea043}
@@ -275,8 +264,8 @@ function filterAll(){
   });
 }
 function copySecret(btn){
-  const b64=btn.getAttribute('data-b64');
-  navigator.clipboard.writeText(atob(b64)).then(()=>{
+  const txt=btn.getAttribute('data-secret');
+  navigator.clipboard.writeText(txt).then(()=>{
     const orig=btn.innerHTML;
     btn.innerHTML='✅ تم النسخ';
     btn.classList.add('copied');
@@ -301,14 +290,13 @@ HTML_HEAD
     if [[ -s "$OUT_DIR/live.tmp" ]]; then
         while IFS='|' read -r secret rule url file; do
             [[ -z "$secret" ]] && continue
-            local b64=$(echo -n "$secret" | base64 -w 0 2>/dev/null || echo -n "$secret" | base64 | tr -d '\n')
-            local masked="${secret:0:10}...${secret: -4}"
+            local js_secret=$(echo "$secret" | sed "s/'/\\\\'/g")
             echo "<div class='card live'>" >> "$html"
             echo "  <div class='card-header'><span class='badge'>$rule</span></div>" >> "$html"
             echo "  <div class='file'>📁 $file</div>" >> "$html"
-            echo "  <div class='secret-box'>$masked</div>" >> "$html"
+            echo "  <div class='secret-box'>$secret</div>" >> "$html"
             echo "  <div class='actions'>" >> "$html"
-            echo "    <button class='btn btn-copy' data-b64='$b64' onclick=\"copySecret(this)\">📋 نسخ</button>" >> "$html"
+            echo "    <button class='btn btn-copy' data-secret=\"$js_secret\" onclick=\"copySecret(this)\">📋 نسخ المفتاح</button>" >> "$html"
             if [[ -n "$url" ]]; then
                 echo "    <a href='$url' target='_blank' class='btn btn-visit'>🌐 المستودع</a>" >> "$html"
             else
@@ -341,7 +329,7 @@ HTML_HEAD
         echo "<div class='empty'>لا توجد مفاتيح ميتة</div>" >> "$html"
     fi
 
-    echo "<div class='footer'>KeyHunter v31 · Termux · $(date)</div>" >> "$html"
+    echo "<div class='footer'>KeyHunter v31.4 · Termux · $(date)</div>" >> "$html"
     echo "</body></html>" >> "$html"
 
     echo -e "${G}✓ تم إنشاء التقرير${N}"
